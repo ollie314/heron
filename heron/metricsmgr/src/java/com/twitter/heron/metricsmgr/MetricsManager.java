@@ -127,6 +127,11 @@ public class MetricsManager {
 
     this.mainThreadId = Thread.currentThread().getId();
 
+    // Init the ErrorReportHandler
+    ErrorReportLoggingHandler.init(
+        metricsmgrId, metricsCollector, heronMetricsExportIntervalSec,
+        systemConfig.getHeronMetricsMaxExceptionsPerMessageCount());
+
     // Set up the internal Metrics Export routine
     setupInternalMetricsExport();
 
@@ -332,6 +337,20 @@ public class MetricsManager {
      * Handler for uncaughtException
      */
     public void uncaughtException(Thread thread, Throwable exception) {
+      // Add try and catch block to prevent new exceptions stop the handling thread
+      try {
+        // Delegate to the actual one
+        handleException(thread, exception);
+
+        // SUPPRESS CHECKSTYLE IllegalCatch
+      } catch (Throwable t) {
+        LOG.log(Level.SEVERE, "Failed to handle exception. Process halting", t);
+        Runtime.getRuntime().halt(1);
+      }
+    }
+
+    // The actual uncaught exceptions handing logic
+    private void handleException(Thread thread, Throwable exception) {
       // We would fail fast when errors occur
       if (exception instanceof Error) {
         LOG.log(Level.SEVERE,
@@ -350,7 +369,8 @@ public class MetricsManager {
       }
 
       LOG.log(Level.SEVERE,
-          "Exception caught in thread: " + thread.getName() + " with thread id: " + thread.getId(),
+          "Exception caught in thread: " + thread.getName()
+              + " with thread id: " + thread.getId(),
           exception);
 
       String sinkId = null;
