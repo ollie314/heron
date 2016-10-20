@@ -14,18 +14,18 @@ from httplib import *
 # The location of default configure file
 DEFAULT_TEST_CONF_FILE = "integration-test/src/python/test_runner/resources/test.json"
 
-RETRY_ATTEMPTS = 25
+RETRY_ATTEMPTS = 15
 #seconds
 RETRY_INTERVAL = 10
 
 def run_test(topology_name, classpath, expected_result_file_path, params):
   ''' Runs the test for one topology '''
-  http_server_url = "http://%s:%d/results" %\
+  http_results_server_url = "http://%s:%d/results" %\
                     (params.results_server_hostname, params.results_server_port)
 
   #submit topology
   try:
-    args = http_server_url + " " + topology_name
+    args = "-r %s -t %s" % (http_results_server_url, topology_name)
     submit_topology(params.heron_cli_path, params.cli_config_path, params.cluster, params.role,
                     params.env, params.tests_bin_path, classpath,
                     params.release_package_uri, args)
@@ -84,7 +84,7 @@ def fetch_result_from_server(server_address, server_port, topology_name):
   ''' Make a http get request to fetch actual results from http server '''
   for i in range(0, RETRY_ATTEMPTS):
     logging.info("Fetching results for topology %s, retry count: %d", topology_name, i)
-    response = get_http_response(server_address, int(server_port), topology_name)
+    response = get_http_response(server_address, server_port, topology_name)
     if response.status == 200:
       return (response.status, response.read())
     elif i != RETRY_ATTEMPTS:
@@ -100,7 +100,7 @@ def get_http_response(server_address, server_port, topology_name):
   # pylint: disable=unused-variable
   for i in range(0, RETRY_ATTEMPTS):
     try:
-      connection = HTTPConnection(server_address, int(server_port))
+      connection = HTTPConnection(server_address, server_port)
       connection.request('GET', '/results/' + topology_name)
       response = connection.getresponse()
       return response
@@ -133,10 +133,9 @@ def submit_topology(heron_cli_path, cli_config_path, cluster, role,
 
   logging.info("Submitting command: %s", cmd)
 
-  for _ in range(0, RETRY_ATTEMPTS):
-    if os.system(cmd) == 0:
-      logging.info("Successfully submitted topology")
-      return
+  if os.system(cmd) == 0:
+    logging.info("Successfully submitted topology")
+    return
 
   raise RuntimeError("Unable to submit the topology")
 
@@ -146,14 +145,10 @@ def kill_topology(heron_cli_path, cli_config_path, cluster, role, env, topology_
   cmd = "%s kill --config-path=%s %s %s --verbose" %\
         (heron_cli_path, cli_config_path, cluster_token(cluster, role, env), topology_name)
 
-  logging.info("Submitting command: %s", cmd)
-  for i in range(0, RETRY_ATTEMPTS):
-    if os.system(cmd) != 0:
-      time.sleep(RETRY_INTERVAL)
-      logging.warning("killing topology %s with %d attempts", topology_name, i)
-    else:
-      logging.info("Successfully killed topology %s", topology_name)
-      return
+  logging.info("Kill topology command: %s", cmd)
+  if os.system(cmd) == 0:
+    logging.info("Successfully killed topology %s", topology_name)
+    return
 
   logging.error("Failed to kill topology %s", topology_name)
   raise RuntimeError("Unable to kill the topology")
@@ -162,7 +157,7 @@ def run_tests(conf, args):
   ''' Run the test for each topology specified in the conf file '''
   successes = []
   failures = []
-  timestamp = str(int(time.time()))
+  timestamp = time.strftime('%Y%m%d%H%M%S')
 
   if args.tests_bin_path.endswith(".jar"):
     test_topologies = conf["javaTopologies"]
@@ -205,7 +200,6 @@ def main():
   ''' main '''
   root = logging.getLogger()
   root.setLevel(logging.DEBUG)
-  print(os.path.join(os.path.dirname(sys.modules[__name__].__file__), DEFAULT_TEST_CONF_FILE), 'rb')
   conf_file = DEFAULT_TEST_CONF_FILE
   # Read the configuration file from package
   conf_string = pkgutil.get_data(__name__, conf_file)
@@ -236,7 +230,10 @@ def main():
   #parser.add_argument('-et', '--enable-topologies', dest='enableTopologies', default=None,
   #                    help='comma separated test case(classpath) name that will be run only')
 
-  args = parser.parse_args()
+  args, unknown_args = parser.parse_known_args()
+  if unknown_args:
+    logging.error('Unknown argument passed to %s: %s', sys.argv[0], unknown_args[0])
+    sys.exit(1)
 
   (successes, failures) = run_tests(conf, args)
   total = len(failures) + len(successes)
