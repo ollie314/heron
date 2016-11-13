@@ -547,9 +547,16 @@ class HeronExecutor(object):
         for process_info in self.processes_to_monitor.values():
           if process_info.name == command_name:
             del self.processes_to_monitor[process_info.pid]
-            Log.info("Killing %s process with pid %s: %s" %
+            Log.info("Killing %s process with pid %d: %s" %
                      (process_info.name, process_info.pid, ' '.join(command)))
-            process_info.process.kill()
+            try:
+              process_info.process.kill()
+            except OSError, e:
+              if e.errno == 3: # No such process
+                Log.warn("Expected process %s with pid %d was not running, ignoring." %
+                         (process_info.name, process_info.pid))
+              else:
+                raise e
 
   def _start_processes(self, commands):
     """Start all commands and add them to the dict of processes to be monitored """
@@ -678,22 +685,19 @@ class HeronExecutor(object):
 
     # pylint: disable=unused-argument
     def on_packing_plan_watch(state_manager, new_packing_plan):
-      Log.info(
-          "State watch triggered for packing plan change. New PackingPlan: %s" %
-          str(new_packing_plan))
+      Log.debug("State watch triggered for PackingPlan update on shard %s. Existing: %s, New: %s" %
+                (self.shard, str(self.packing_plan), str(new_packing_plan)))
 
       if self.packing_plan != new_packing_plan:
-        Log.info("State watch triggered for PackingPlan update, PackingPlan change detected on "\
-                 "shard %s, relaunching. Existing: %s, New: %s" %
-                 (self.shard, str(self.packing_plan), str(new_packing_plan)))
+        Log.info("PackingPlan change detected on shard %s, relaunching effected processes."
+                 % self.shard)
         self.update_packing_plan(new_packing_plan)
 
         Log.info("Updating executor processes")
         self.launch()
       else:
-        Log.info("State watch triggered for PackingPlan update but PackingPlan not changed so "\
-                 "not relaunching. Existing: %s, New: %s" %
-                 (str(self.packing_plan), str(new_packing_plan)))
+        Log.info(
+            "State watch triggered for PackingPlan update but plan not changed so not relaunching.")
 
     for state_manager in self.state_managers:
       # The callback function with the bound
